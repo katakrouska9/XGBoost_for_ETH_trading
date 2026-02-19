@@ -4,6 +4,8 @@ from sklearn.model_selection import train_test_split
 import numpy as np
 import yfinance as yf
 import pandas as pd
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score, classification_report
 
 
 
@@ -188,5 +190,65 @@ X[['ATR','ATR_rel']] = results_atr
 X['ATR_rel'].mean()
 print(X.head(30))
 
+#Adding Btc as a feature
 
+Btc = yf.download("BTC-USD", period="730d", interval="1h")
+Btc.columns = data.columns.get_level_values(0)
 
+Btc.head()
+Btc.isna().sum()
+Btc.describe()
+
+Btc['hourly_return'] = ((Btc['Close']/Btc['Close'].shift(1))-1)
+X['btc_gap'] = X['hourly_return_t-1']-Btc['hourly_return'].shift(2) # ETH follows BTC with a lag
+#Btc['24h_average_return']= Btc['hourly_return'].rolling(24).mean()
+#X['24h_average_return'] = X['hourly_return_t-1'].rolling(24).mean()
+#Btc['24h_average_return'].shift(2).corr(X['24h_average_return'])
+
+#droping columns not meant for ML
+X=X.drop(columns = ['ATR'])
+X['target'] = X_prep['target']
+
+#Dropping first 50 rows with NaN & last 48 rows with non-reliable target values
+X = X.iloc[50:,:]
+X = X.iloc[:-48]
+X.tail(50)
+X.isna().sum()
+
+#                   XGBOOST ALGORITHM TRAINING
+##############################################################
+
+y_xg = X['target']
+X_xg = X.drop(columns = ['target'])
+
+X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
+
+model = XGBClassifier(
+    n_estimators=150,     # Dostatek pokusů na učení
+    learning_rate=0.02,   # Pomalé a precizní učení
+    max_depth=4,          # Jednoduchá, robustní pravidla
+    subsample=0.7,        # Trénuj jen na části dat pro každý strom
+    colsample_bytree=0.7,
+    scale_pos_weight=2.96, # Náhodně vybírej indikátory
+    random_state=42
+)
+model.fit(X_xg_train,y_xg_train)
+y_pred = model.predict(X_xg_test)
+print(f"Accuracy: {accuracy_score(y_xg_test, y_pred):.2f}")
+print(classification_report(y_xg_test, y_pred))
+
+# Stricter buying threshold
+y_probs = model.predict_proba(X_xg_test)[:, 1]
+threshold = 0.65
+y_pred_strict = (y_probs >= threshold).astype(int)
+
+print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_strict):.2f}")
+print(classification_report(y_xg_test, y_pred_strict))
+
+comparison = pd.DataFrame({
+    'Skutečnost (Reality)': y_xg_test.values,
+    'Predikce (Model)': y_pred_strict
+}, index=y_xg_test.index)
+
+# Podíváme se na prvních 20 řádků
+print(comparison.head(50))
