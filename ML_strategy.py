@@ -29,11 +29,11 @@ data.isna().sum() #no n/a
 data.describe()
 data.count() 
 
-#Defining the ML dataset
+#Defining the ML dataset - Part1
 
 X_prep = data[['Close']].rename(columns = {'Close': 'P_t'}) #Working with closing price
 X_prep['P_t-1'] = X_prep['P_t'].shift(1)
-X_prep['hourly_return_pct'] = ((X_prep['P_t']/X_prep['P_t-1'])-1)
+X_prep['hourly_return'] = ((X_prep['P_t']/X_prep['P_t-1'])-1)
 
 ##Defining buy classification:
 
@@ -88,13 +88,10 @@ X_prep['target'] = create_target(X_prep, horizon, tp, sl)
 X_prep.iloc[0,3] = 0 # first day must be 0, because doesnt have an opening price
 X_prep['target'].value_counts(normalize = True)
 
-
-plt.plot(X_prep['target'])
-plt.show()
 X_prep.head(30)
 
 
-## BACKTESTING ## Defining position
+## BACKTESTING - defining max theoretical return with look-ahead bias ## Defining position
 
 '''
     Creating a position to take based on buy command of previous function
@@ -119,27 +116,26 @@ def create_stable_position(X_prep, tp=0.04, sl=0.02, horizon=48):
             continue
         if targets[i] == 1:
             in_pos = True
-            future = prices[i + 1 : i + horizon + 1]
+            future = prices[i: i + horizon]
             if len(future) == 0:
                 in_pos = False
                 continue
-            tp_lvl = prices[i] * (1 + tp)
-            sl_lvl = prices[i] * (1 - sl)
+            tp_lvl = prices[i-1] * (1 + tp)
+            sl_lvl = prices[i-1] * (1 - sl)
             tp_hits = np.where(future >= tp_lvl)[0]
             sl_hits = np.where(future <= sl_lvl)[0]
             f_tp = tp_hits[0] if len(tp_hits) > 0 else float("inf")
             f_sl = sl_hits[0] if len(sl_hits) > 0 else float("inf")
             duration = min(f_tp, f_sl, horizon - 1)
-            exit_idx = i + duration + 1
+            exit_idx = i + duration
             position[i] = 1
     return position
 
 X_prep['stable_position'] = create_stable_position(X_prep, tp=0.04, sl=0.02, horizon=48)
 X_prep['stable_position'].value_counts()
-X_prep.head(50)
 
 #Calculating cummulative return before fees
-X_prep['perfect_strategy'] = (X_prep['hourly_return_pct']*X_prep['stable_position']).fillna(0)
+X_prep['perfect_strategy'] = (X_prep['hourly_return']*X_prep['stable_position']).fillna(0)
 X_prep['perfect_cum_return'] = (1+X_prep['perfect_strategy']).cumprod()
 
 plt.plot(X_prep['perfect_cum_return'])
@@ -161,7 +157,36 @@ X_prep['perfect_cum_return_w_fees'] = (1+X_prep['perfect_strategy_w_fees']).cump
 plt.plot(X_prep['perfect_cum_return_w_fees'])
 plt.show()
 
-print(X_prep['perfect_cum_return_w_fees'].max())
-
+maximal_theoretical_return = X_prep['perfect_cum_return_w_fees'][-1]
+print(maximal_theoretical_return)
 #print(X_prep.head(60).sort_values('Datetime')[['stable_position',"is_buy"]])
+
+#Defining the ML dataset - Part2 - adding additional features
+
+X = pd.DataFrame(X_prep['hourly_return'].shift(1)).rename(columns = {'hourly_return': "hourly_return_t-1"})
+X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
+X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
+X_prep['SMA50_t-1']= X_prep['P_t-1'].rolling(50).mean()
+X['Distance to SMA50'] = (X_prep['P_t-1']/X_prep['SMA50_t-1'])-1
+
+def calculate_ATR(df, period = 24):
+    hl = abs(df['High']- df['Low'])
+    hc = abs(df['High']-df['Close'].shift(1))
+    lc = abs(df['Low']-df['Close'].shift(1))
+    
+    tr = np.maximum(hl, np.maximum(hc, lc))
+    atr = tr.rolling(period).mean().shift(1)
+    atr_rel = atr/ (df['Close'].shift(1))
+
+    return pd.DataFrame({
+        'ATR': atr,
+        'ATR_rel': atr_rel
+    }, index=df.index)
+
+results_atr = calculate_ATR(data)
+X[['ATR','ATR_rel']] = results_atr
+X['ATR_rel'].mean()
+print(X.head(30))
+
+
 
