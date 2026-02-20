@@ -143,7 +143,7 @@ X_prep['perfect_cum_return'] = (1+X_prep['perfect_strategy']).cumprod()
 plt.plot(X_prep['perfect_cum_return'])
 plt.show()
 
-#Calculating cummulative return before fees
+#Calculating cummulative return after fees
 
 # Marking time of buy and sell
 X_prep['is_buy'] = (X_prep['stable_position'].diff() == 1) | (X_prep['stable_position'].diff() == -1)
@@ -170,6 +170,8 @@ X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
 X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
 X_prep['SMA50_t-1']= X_prep['P_t-1'].rolling(50).mean()
 X['Distance to SMA50'] = (X_prep['P_t-1']/X_prep['SMA50_t-1'])-1
+X_prep['SMA200_t-1']= X_prep['P_t-1'].rolling(200).mean()
+X['Distance to SMA200'] = (X_prep['P_t-1']/X_prep['SMA200_t-1'])-1
 
 def calculate_ATR(df, period = 24):
     hl = abs(df['High']- df['Low'])
@@ -209,8 +211,9 @@ X['btc_gap'] = X['hourly_return_t-1']-Btc['hourly_return'].shift(2) # ETH follow
 X=X.drop(columns = ['ATR'])
 X['target'] = X_prep['target']
 
+
 #Dropping first 50 rows with NaN & last 48 rows with non-reliable target values
-X = X.iloc[50:,:]
+X = X.iloc[200:,:]
 X = X.iloc[:-48]
 X.tail(50)
 X.isna().sum()
@@ -224,7 +227,7 @@ X_xg = X.drop(columns = ['target'])
 X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
 
 model = XGBClassifier(
-    n_estimators=150,     # Dostatek pokusů na učení
+    n_estimators=5,     # Dostatek pokusů na učení
     learning_rate=0.02,   # Pomalé a precizní učení
     max_depth=4,          # Jednoduchá, robustní pravidla
     subsample=0.7,        # Trénuj jen na části dat pro každý strom
@@ -239,7 +242,7 @@ print(classification_report(y_xg_test, y_pred))
 
 # Stricter buying threshold
 y_probs = model.predict_proba(X_xg_test)[:, 1]
-threshold = 0.65
+threshold = 0.75
 y_pred_strict = (y_probs >= threshold).astype(int)
 
 print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_strict):.2f}")
@@ -250,5 +253,48 @@ comparison = pd.DataFrame({
     'Predikce (Model)': y_pred_strict
 }, index=y_xg_test.index)
 
-# Podíváme se na prvních 20 řádků
 print(comparison.head(50))
+
+#XG_return = X_xg_test['hourly_return_t-1'].shift(-1)* y_pred
+#cummulative_XG = (1+XG_return).cumprod()
+
+#Posuvne okno
+
+#Rolling 6month training, one month test
+train_size = 24*30*6
+test_size = 24*30
+step = test_size
+
+results=[]
+
+for start in range(0, len(X_xg) - train_size - test_size, step):
+
+    train_end = start + train_size
+    test_end = train_end + test_size
+
+    X_train, X_test = X_xg.iloc[start:train_end], X_xg.iloc[train_end:test_end]
+    y_train, y_test = y_xg.iloc[start:train_end], y_xg.iloc[train_end:test_end]
+
+    spw = (y_train == 0).sum()/(y_train == 1).sum()
+
+    model = XGBClassifier(n_estimators = 100, max_depth = 4, scale_pos_weight = spw, eval_metric = "logloss" )
+    model.fit(X_train, y_train)
+
+    probs = model.predict_proba(X_test)[:,1]
+    y_pred = (probs > 0.65).astype(int)
+
+    report = classification_report(y_test, y_pred, output_dict= True, zero_division= 0)
+    prec1 = report['1']['precision']
+    rec1 = report['1']['recall']
+    f1_score = report['1']['f1-score']
+    n_trades = y_pred.sum()
+
+    results.append({'start_date': X_test.index[0],
+                    'end_date': X_test.index[-1],
+                    'precision_1': prec1,
+                    'recall_1': rec1,
+                    'f1_score': f1_score,
+                    'n_trades': n_trades})
+    
+
+results_call = pd.DataFrame(results)
