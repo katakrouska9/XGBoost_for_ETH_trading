@@ -3,14 +3,13 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import numpy as np
 import yfinance as yf
-import pandas as pd
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from xgboost import plot_importance
 
 
 
-#                   DATASET PREPARATION 
+#                   DATASET LOADING 
 ##############################################################
 
 # Download price
@@ -19,11 +18,6 @@ pd.reset_option("display.max.rows", None)
 
 data = yf.download("ETH-USD", period="730d", interval="1h")
 data.columns = data.columns.get_level_values(0)
-
-#Ploting 
-
-plt.plot(data['Close'])
-plt.show()
 
 #Checking summary statistics
 
@@ -95,9 +89,6 @@ X_prep['target'] = create_target(X_prep, horizon, tp, sl)
 X_prep.iloc[0,3] = 0 # first day must be 0, because doesnt have an opening price
 X_prep['target'].value_counts(normalize = True)
 
-X_prep.head(30)
-
-
 ## Defining position
 
 '''
@@ -154,8 +145,8 @@ def cum_return(df):
 
 X_prep = cum_return(X_prep)
 
-plt.plot(X_prep['perfect_cum_return'])
-plt.show()
+#plt.plot(X_prep['perfect_cum_return'])
+#plt.show()
 
 #Calculating cummulative return after fees
 """
@@ -174,17 +165,15 @@ def cum_return_after_fees(df):
     return df
 
 X_prep = cum_return_after_fees(X_prep)
-X_prep.tail(400)
 
-plt.plot(X_prep['perfect_cum_return_w_fees'])
-plt.show()
+#plt.plot(X_prep['perfect_cum_return_w_fees'])
+#plt.show()
 
 maximal_theoretical_return = X_prep['perfect_cum_return_w_fees'][-1]
 print(maximal_theoretical_return)
 
 
-
-#                   FEATURE ADDITIONS - creating X 
+#                   FEATURE ENGINEERING - creating X 
 ##############################################################
 
 #SMAs = moving averages
@@ -214,7 +203,6 @@ def calculate_ATR(df, period = 24):
 results_atr = calculate_ATR(data)
 X[['ATR','ATR_rel']] = results_atr
 X['ATR_rel'].mean()
-print(X.head(50))
 
 #Time info
 
@@ -260,8 +248,6 @@ X['position'] = X_prep['stable_position'].astype(int)
 #Dropping first 50 rows with NaN & last 48 rows with non-reliable target values
 X_crop= X.iloc[200:,:]
 X_crop = X_crop.iloc[:-48]
-X_crop.head(50)
-X_crop.isna().sum()
 
 #                   XGBOOST ALGORITHM TRAINING
 ##############################################################
@@ -306,18 +292,19 @@ results=[]
 y_pred_rolling = []
 models_list = []
 
-for train_end in range(train_initial_size, len(X_xg) - test_size, step):
+for train_end in range(train_size, len(X_xg) - test_size, step):
 
-    train_end = start + train_size
+    
     test_end = train_end + test_size
 
-    X_train, X_test = X_xg.iloc[start:train_end], X_xg.iloc[train_end:test_end]
-    y_train, y_test = y_xg.iloc[start:train_end], y_xg.iloc[train_end:test_end]
+    X_train, X_test = X_xg.iloc[0:train_end], X_xg.iloc[train_end:test_end]
+    y_train, y_test = y_xg.iloc[0:train_end], y_xg.iloc[train_end:test_end]
 
     spw = (y_train == 0).sum()/(y_train == 1).sum()
 
     model = XGBClassifier(n_estimators = 100, max_depth = 4, scale_pos_weight = spw, eval_metric = "logloss" )
     model.fit(X_train, y_train)
+    models_list.append(model)
 
     probs = model.predict_proba(X_test)[:,1]
     y_pred = (probs > 0.60).astype(int)
@@ -363,32 +350,48 @@ backtest_df = cum_return_after_fees(backtest_df)
 print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
 print(backtest_df.tail(50))
 
+### random
+backtest_df['cum_return_market']= (1+backtest_df['hourly_return']).cumprod()
 
-plt.plot(backtest_df['perfect_cum_return_w_fees'])
-plt.plot(backtest_df['perfect_cum_return'])
+plt.plot(backtest_df['perfect_cum_return_w_fees'], label = 'Cumulative return after fees')
+plt.plot(backtest_df['perfect_cum_return'], label = 'Cumulative return before fees')
+plt.plot(backtest_df['cum_return_market'], label = 'Market return (no fees)')
+plt.axhline(y=1, color='black', linestyle='--', linewidth=1.5)
+plt.title('Cumulative return before and after fees')
+plt.xlabel('Date')
+plt.ylabel('Cumulative return')
+plt.legend()
+#plt.savefig('cum_return.png', dpi = 300)
 plt.show()
 
 plot_importance(model)
+plt.title('Feature importance')
+#plt.savefig('feature_importance.png', dpi = 300)
 plt.show()
 
-#Predicting on newest unseen data
+
+#                   TESTING ON NEWEST DATA - unseen
+##############################################################
 
 predict_january = X_xg.loc['2026-01-26 20:00:00+00:00':].copy()
 probs_01 = model.predict_proba(predict_january)[:,1]
-pred_01 = (probs_01>0.7).astype(int)
+pred_01 = (probs_01>0.65).astype(int)
 probs_01.mean()
-
 pd.DataFrame(pred_01).value_counts(normalize = True)
 
+#Calculation of cumulative return
 y_pred01_series = pd.DataFrame(pd.Series(pred_01, index=predict_january.index)).rename(columns = {0: 'target'})
 y_pred01_series['hourly_return'] = X_prep['hourly_return']
 y_pred01_series['P_t'] = X_prep['P_t']
-print(y_pred01_series.head(100))
 
 y_pred01_series['stable_position']= create_stable_position(y_pred01_series, tp=0.04, sl=sl, horizon=24)
 y_pred01_series = cum_return(y_pred01_series)
-y_pred01_series['perfect_cum_return'][-1]
+y_pred01_series = cum_return_after_fees(y_pred01_series)
+print(y_pred01_series['perfect_cum_return'][-1], y_pred01_series['perfect_cum_return_w_fees'][-1])
 
-plt.plot(y_pred01_series['perfect_cum_return'])
+plt.plot(y_pred01_series['perfect_cum_return_w_fees'], label = "Cumulative return after fees" )
+plt.plot(y_pred01_series['perfect_cum_return'], label = "Cumulative return before fees" )
+plt.plot((1+y_pred01_series['hourly_return']).cumprod(), label = "Market return")
+plt.title('Cumulative return - February 2026 fall')
+plt.savefig('cum_return - 02.2026.png', dpi = 300)
 plt.show()
-
