@@ -104,13 +104,13 @@ X_prep.head(30)
     
     '''
 
-def create_stable_position(X_prep, tp=0.04, sl=0.02, horizon=48):
-    prices = X_prep["P_t"].values
-    targets = X_prep["target"].values
-    position = np.zeros(len(X_prep))
+def create_stable_position(df, tp=tp, sl=sl, horizon=horizon):
+    prices = df["P_t"].values
+    targets = df["target"].values
+    position = np.zeros(len(df))
     in_pos = False
     exit_idx = 0
-    for i in range(len(X_prep)):
+    for i in range(len(df)):
         if in_pos:
             position[i] = 1
             if i >= exit_idx:
@@ -133,12 +133,16 @@ def create_stable_position(X_prep, tp=0.04, sl=0.02, horizon=48):
             position[i] = 1
     return position
 
-X_prep['stable_position'] = create_stable_position(X_prep, tp=0.04, sl=0.02, horizon=48)
+X_prep['stable_position'] = create_stable_position(X_prep)
 X_prep['stable_position'].value_counts()
 
 #Calculating cummulative return before fees
-X_prep['perfect_strategy'] = (X_prep['hourly_return']*X_prep['stable_position']).fillna(0)
-X_prep['perfect_cum_return'] = (1+X_prep['perfect_strategy']).cumprod()
+def cum_return(df):
+    df['perfect_strategy'] = (df['hourly_return']* df['stable_position']).fillna(0)
+    df['perfect_cum_return'] = (1+df['perfect_strategy']).cumprod()
+    return df
+
+X_prep = cum_return(X_prep)
 
 plt.plot(X_prep['perfect_cum_return'])
 plt.show()
@@ -146,15 +150,20 @@ plt.show()
 #Calculating cummulative return after fees
 
 # Marking time of buy and sell
-X_prep['is_buy'] = (X_prep['stable_position'].diff() == 1) | (X_prep['stable_position'].diff() == -1)
 
-fee = 0.001
-X_prep['perfect_strategy_w_fees'] = np.where(
-    X_prep['is_buy'] == True, 
-    X_prep['perfect_strategy'] - fee, 
-    X_prep['perfect_strategy']
-)
-X_prep['perfect_cum_return_w_fees'] = (1+X_prep['perfect_strategy_w_fees']).cumprod()
+def cum_return_after_fees(df):
+    df['is_buy'] = (df['stable_position'].diff() == 1) | (df['stable_position'].diff() == -1)
+    fee = 0.001
+
+    df['perfect_strategy_w_fees'] = np.where(
+        df['is_buy'] == True, 
+        df['perfect_strategy'] - fee, 
+        df['perfect_strategy']
+    )
+    df['perfect_cum_return_w_fees'] = (1+df['perfect_strategy_w_fees']).cumprod()
+    return df
+
+X_prep = cum_return_after_fees(X_prep)
 
 plt.plot(X_prep['perfect_cum_return_w_fees'])
 plt.show()
@@ -234,7 +243,7 @@ X_crop.isna().sum()
 #                   XGBOOST ALGORITHM TRAINING
 ##############################################################
 
-y_xg = X_crop['position']
+y_xg = X_crop['target']
 X_xg = X_crop.drop(columns = ['position', 'target'])
 
 X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
@@ -319,3 +328,26 @@ all_predictions
 #                   BACKTEST
 ##############################################################
 
+#Creating position -- ONLY IF NOT PREDICTING POSITION ALREADY
+backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
+backtest_df['P_t'] = X_prep['P_t']
+
+backtest_df['stable_position']= create_stable_position(backtest_df)
+
+
+#Adding return
+#backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'stable_position'})
+backtest_df['hourly_return']= X_prep['hourly_return'] #merged based on index
+
+
+# Cum return before fees
+backtest_df = cum_return(backtest_df)
+
+backtest_df = cum_return_after_fees(backtest_df)
+print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
+print(backtest_df.tail(50))
+
+
+plt.plot(backtest_df['perfect_cum_return_w_fees'])
+plt.plot(backtest_df['perfect_cum_return'])
+plt.show()
