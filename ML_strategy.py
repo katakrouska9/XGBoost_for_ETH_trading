@@ -10,12 +10,12 @@ from xgboost import plot_importance
 
 
 
-#                   DATASET PREPARATION
+#                   DATASET PREPARATION 
 ##############################################################
 
 # Download price
 
-pd.set_option("display.max.rows", None)
+pd.reset_option("display.max.rows", None)
 
 data = yf.download("ETH-USD", period="730d", interval="1h")
 data.columns = data.columns.get_level_values(0)
@@ -32,11 +32,15 @@ data.isna().sum() #no n/a
 data.describe()
 data.count() 
 
-#Defining the ML dataset - Part1
+#Dataset preparation
 
 X_prep = data[['Close']].rename(columns = {'Close': 'P_t'}) #Working with closing price
 X_prep['P_t-1'] = X_prep['P_t'].shift(1)
 X_prep['hourly_return'] = ((X_prep['P_t']/X_prep['P_t-1'])-1)
+
+
+#                   TARGET CALCULATION 
+##############################################################
 
 ##Defining buy classification:
 
@@ -94,7 +98,7 @@ X_prep['target'].value_counts(normalize = True)
 X_prep.head(30)
 
 
-## BACKTESTING - defining max theoretical return with look-ahead bias ## Defining position
+## Defining position
 
 '''
     Creating a position to take based on buy command of previous function
@@ -137,7 +141,12 @@ def create_stable_position(df, tp=tp, sl=sl, horizon=horizon):
 X_prep['stable_position'] = create_stable_position(X_prep)
 X_prep['stable_position'].value_counts()
 
+##############. BACKTESTING  ##################### defining max theoretical return with look-ahead bias
+
 #Calculating cummulative return before fees
+"""
+Calculates cumulative return using hourly historical return and long/no position
+"""
 def cum_return(df):
     df['perfect_strategy'] = (df['hourly_return']* df['stable_position']).fillna(0)
     df['perfect_cum_return'] = (1+df['perfect_strategy']).cumprod()
@@ -149,12 +158,12 @@ plt.plot(X_prep['perfect_cum_return'])
 plt.show()
 
 #Calculating cummulative return after fees
-
-# Marking time of buy and sell
-
+"""
+Calculates cumulative return after substracting a fixed fee in a time of purchase/sale - fee approximates also for slippage
+"""
 def cum_return_after_fees(df):
     df['is_buy'] = (df['stable_position'].diff() == 1) | (df['stable_position'].diff() == -1)
-    fee = 0.001
+    fee = 0.0015 #including both fee and average slippage
 
     df['perfect_strategy_w_fees'] = np.where(
         df['is_buy'] == True, 
@@ -165,17 +174,20 @@ def cum_return_after_fees(df):
     return df
 
 X_prep = cum_return_after_fees(X_prep)
+X_prep.tail(400)
 
 plt.plot(X_prep['perfect_cum_return_w_fees'])
 plt.show()
 
 maximal_theoretical_return = X_prep['perfect_cum_return_w_fees'][-1]
 print(maximal_theoretical_return)
-#print(X_prep.head(60).sort_values('Datetime')[['stable_position',"is_buy"]])
 
-#Defining the ML dataset - Part2 - adding additional features
 
-#SMAs
+
+#                   FEATURE ADDITIONS - creating X 
+##############################################################
+
+#SMAs = moving averages
 X = pd.DataFrame(X_prep['hourly_return'].shift(1)).rename(columns = {'hourly_return': "hourly_return_t-1"})
 X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
 X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
@@ -184,7 +196,7 @@ X['Distance to SMA50'] = (X_prep['P_t-1']/X_prep['SMA50_t-1'])-1
 X_prep['SMA200_t-1']= X_prep['P_t-1'].rolling(200).mean()
 X['Distance to SMA200'] = (X_prep['P_t-1']/X_prep['SMA200_t-1'])-1
 
-#ATR
+#ATR = volatility estimate
 def calculate_ATR(df, period = 24):
     hl = abs(df['High']- df['Low'])
     hc = abs(df['High']-df['Close'].shift(1))
@@ -213,7 +225,7 @@ X['weekday'] = X.index.dayofweek
 
 X['cum_return_12h'] = (X_prep['P_t-1']/X_prep['P_t-1'].shift(12))-1
 
-#RSI
+#RSI (Relative Strength Index)
 
 def calculate_rsi(series, period=14):
     delta = series.diff()
@@ -226,7 +238,7 @@ def calculate_rsi(series, period=14):
 X['RSI'] = calculate_rsi(X_prep['P_t'], 14)
 X['RSI_t-1'] = X['RSI'].shift(1)
 
-#Adding Btc as a feature
+#BTC
 
 Btc = yf.download("BTC-USD", period="730d", interval="1h")
 Btc.columns = data.columns.get_level_values(0)
@@ -236,17 +248,13 @@ Btc.isna().sum()
 Btc.describe()
 
 Btc['hourly_return'] = ((Btc['Close']/Btc['Close'].shift(1))-1)
-X['btc_gap'] = X['hourly_return_t-1']-Btc['hourly_return'].shift(1) # ETH follows BTC with a lag
-#Btc['24h_average_return']= Btc['hourly_return'].rolling(24).mean()
-#X['24h_average_return'] = X['hourly_return_t-1'].rolling(24).mean()
-Btc['hourly_return'].shift(2).corr(X['hourly_return_t-1'])
+X['btc_gap'] = X['hourly_return_t-1']-(Btc['hourly_return'].shift(1)) # Difference between ETH and BTC return
+
 
 #droping columns not meant for ML
 X=X.drop(columns = ['ATR', 'RSI'])
 X['target'] = X_prep['target']
 X['position'] = X_prep['stable_position'].astype(int)
-
-
 
 
 #Dropping first 50 rows with NaN & last 48 rows with non-reliable target values
@@ -261,9 +269,11 @@ X_crop.isna().sum()
 y_xg = X_crop['target']
 X_xg = X_crop.drop(columns = ['position', 'target'])
 
+
+###### 1) One test & train window ####
 X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
 
-model = XGBClassifier(
+model_total = XGBClassifier(
     n_estimators=100,     # Dostatek pokusů na učení
     learning_rate=0.02,   # Pomalé a precizní učení
     max_depth=4,          # Jednoduchá, robustní pravidla
@@ -272,40 +282,31 @@ model = XGBClassifier(
     scale_pos_weight=2.96, # Náhodně vybírej indikátory
     random_state=42
 )
-model.fit(X_xg_train,y_xg_train)
-y_pred = model.predict(X_xg_test)
+model_total.fit(X_xg_train,y_xg_train)
+y_pred = model_total.predict(X_xg_test)
 print(f"Accuracy: {accuracy_score(y_xg_test, y_pred):.2f}")
 print(classification_report(y_xg_test, y_pred))
 
 # Stricter buying threshold
-y_probs = model.predict_proba(X_xg_test)[:, 1]
+y_probs = model_total.predict_proba(X_xg_test)[:, 1]
 threshold = 0.60
 y_pred_strict = (y_probs >= threshold).astype(int)
 
 print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_strict):.2f}")
 print(classification_report(y_xg_test, y_pred_strict))
 
-comparison = pd.DataFrame({
-    'Skutečnost (Reality)': y_xg_test.values,
-    'Predikce (Model)': y_pred_strict
-}, index=y_xg_test.index)
+#### 2) Rolling train & test window #### 6 months training, 1 month test, then move by one month and repeat
 
-print(comparison.head(50))
-
-#XG_return = X_xg_test['hourly_return_t-1'].shift(-1)* y_pred
-#cummulative_XG = (1+XG_return).cumprod()
-
-#Posuvne okno
-
-#Rolling 6month training, one month test
+train_start = 0
 train_size = 24*30*6
 test_size = 24*30
 step = test_size
 
 results=[]
 y_pred_rolling = []
+models_list = []
 
-for start in range(0, len(X_xg) - train_size - test_size, step):
+for train_end in range(train_initial_size, len(X_xg) - test_size, step):
 
     train_end = start + train_size
     test_end = train_end + test_size
@@ -374,10 +375,10 @@ plt.show()
 
 predict_january = X_xg.loc['2026-01-26 20:00:00+00:00':].copy()
 probs_01 = model.predict_proba(predict_january)[:,1]
-pred_01 = (probs_01>0.6).astype(int)
+pred_01 = (probs_01>0.7).astype(int)
+probs_01.mean()
 
 pd.DataFrame(pred_01).value_counts(normalize = True)
-
 
 y_pred01_series = pd.DataFrame(pd.Series(pred_01, index=predict_january.index)).rename(columns = {0: 'target'})
 y_pred01_series['hourly_return'] = X_prep['hourly_return']
@@ -388,6 +389,6 @@ y_pred01_series['stable_position']= create_stable_position(y_pred01_series, tp=0
 y_pred01_series = cum_return(y_pred01_series)
 y_pred01_series['perfect_cum_return'][-1]
 
-plt.plot(y_pred01_series['P_t'])
+plt.plot(y_pred01_series['perfect_cum_return'])
 plt.show()
 
