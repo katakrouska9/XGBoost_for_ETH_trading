@@ -165,6 +165,7 @@ print(maximal_theoretical_return)
 
 #Defining the ML dataset - Part2 - adding additional features
 
+#SMAs
 X = pd.DataFrame(X_prep['hourly_return'].shift(1)).rename(columns = {'hourly_return': "hourly_return_t-1"})
 X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
 X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
@@ -173,6 +174,7 @@ X['Distance to SMA50'] = (X_prep['P_t-1']/X_prep['SMA50_t-1'])-1
 X_prep['SMA200_t-1']= X_prep['P_t-1'].rolling(200).mean()
 X['Distance to SMA200'] = (X_prep['P_t-1']/X_prep['SMA200_t-1'])-1
 
+#ATR
 def calculate_ATR(df, period = 24):
     hl = abs(df['High']- df['Low'])
     hc = abs(df['High']-df['Close'].shift(1))
@@ -190,7 +192,16 @@ def calculate_ATR(df, period = 24):
 results_atr = calculate_ATR(data)
 X[['ATR','ATR_rel']] = results_atr
 X['ATR_rel'].mean()
-print(X.head(30))
+print(X.head(50))
+
+#Time info
+
+X['hour'] = X.index.hour
+X['weekday'] = X.index.dayofweek
+
+# Cumulative return - last 12 hours
+
+X['cum_return_12h'] = (X_prep['P_t-1']/X_prep['P_t-1'].shift(12))-1
 
 #Adding Btc as a feature
 
@@ -202,32 +213,34 @@ Btc.isna().sum()
 Btc.describe()
 
 Btc['hourly_return'] = ((Btc['Close']/Btc['Close'].shift(1))-1)
-X['btc_gap'] = X['hourly_return_t-1']-Btc['hourly_return'].shift(2) # ETH follows BTC with a lag
+X['btc_gap'] = X['hourly_return_t-1']-Btc['hourly_return'].shift(1) # ETH follows BTC with a lag
 #Btc['24h_average_return']= Btc['hourly_return'].rolling(24).mean()
 #X['24h_average_return'] = X['hourly_return_t-1'].rolling(24).mean()
-#Btc['24h_average_return'].shift(2).corr(X['24h_average_return'])
+Btc['hourly_return'].shift(1).corr(X['hourly_return_t-1'])
 
 #droping columns not meant for ML
 X=X.drop(columns = ['ATR'])
 X['target'] = X_prep['target']
+X['position'] = X_prep['stable_position'].astype(int)
+
 
 
 #Dropping first 50 rows with NaN & last 48 rows with non-reliable target values
-X = X.iloc[200:,:]
-X = X.iloc[:-48]
-X.tail(50)
-X.isna().sum()
+X_crop= X.iloc[200:,:]
+X_crop = X_crop.iloc[:-48]
+X_crop.head(50)
+X_crop.isna().sum()
 
 #                   XGBOOST ALGORITHM TRAINING
 ##############################################################
 
-y_xg = X['target']
-X_xg = X.drop(columns = ['target'])
+y_xg = X_crop['position']
+X_xg = X_crop.drop(columns = ['position', 'target'])
 
 X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
 
 model = XGBClassifier(
-    n_estimators=5,     # Dostatek pokusů na učení
+    n_estimators=100,     # Dostatek pokusů na učení
     learning_rate=0.02,   # Pomalé a precizní učení
     max_depth=4,          # Jednoduchá, robustní pravidla
     subsample=0.7,        # Trénuj jen na části dat pro každý strom
@@ -242,7 +255,7 @@ print(classification_report(y_xg_test, y_pred))
 
 # Stricter buying threshold
 y_probs = model.predict_proba(X_xg_test)[:, 1]
-threshold = 0.75
+threshold = 0.60
 y_pred_strict = (y_probs >= threshold).astype(int)
 
 print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_strict):.2f}")
@@ -266,6 +279,7 @@ test_size = 24*30
 step = test_size
 
 results=[]
+y_pred_rolling = []
 
 for start in range(0, len(X_xg) - train_size - test_size, step):
 
@@ -281,20 +295,27 @@ for start in range(0, len(X_xg) - train_size - test_size, step):
     model.fit(X_train, y_train)
 
     probs = model.predict_proba(X_test)[:,1]
-    y_pred = (probs > 0.65).astype(int)
+    y_pred = (probs > 0.60).astype(int)
+    y_pred_series = pd.Series(y_pred, index=X_test.index)
 
     report = classification_report(y_test, y_pred, output_dict= True, zero_division= 0)
     prec1 = report['1']['precision']
     rec1 = report['1']['recall']
     f1_score = report['1']['f1-score']
-    n_trades = y_pred.sum()
+    n_trades = y_pred.sum().item()
 
-    results.append({'start_date': X_test.index[0],
-                    'end_date': X_test.index[-1],
-                    'precision_1': prec1,
-                    'recall_1': rec1,
-                    'f1_score': f1_score,
-                    'n_trades': n_trades})
+    results.append({'start_date': X_test.index[0], 'end_date': X_test.index[-1],'precision_1': prec1, 'recall_1': rec1, 'f1_score': f1_score, 'n_trades': n_trades})
+        
+    y_pred_rolling.append(y_pred_series)
     
-
 results_call = pd.DataFrame(results)
+print(results_call)
+results_call['precision_1'].mean()
+results_call['recall_1'].mean()
+
+all_predictions = pd.concat(y_pred_rolling)
+all_predictions
+
+#                   BACKTEST
+##############################################################
+
