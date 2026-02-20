@@ -6,6 +6,7 @@ import yfinance as yf
 import pandas as pd
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, classification_report
+from xgboost import plot_importance
 
 
 
@@ -14,15 +15,15 @@ from sklearn.metrics import accuracy_score, classification_report
 
 # Download price
 
-pd.set_option("display.max.columns", None)
+pd.set_option("display.max.rows", None)
 
 data = yf.download("ETH-USD", period="730d", interval="1h")
 data.columns = data.columns.get_level_values(0)
 
 #Ploting 
 
-#plt.plot(data['Close'])
-#plt.show()
+plt.plot(data['Close'])
+plt.show()
 
 #Checking summary statistics
 
@@ -212,6 +213,19 @@ X['weekday'] = X.index.dayofweek
 
 X['cum_return_12h'] = (X_prep['P_t-1']/X_prep['P_t-1'].shift(12))-1
 
+#RSI
+
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+X['RSI'] = calculate_rsi(X_prep['P_t'], 14)
+X['RSI_t-1'] = X['RSI'].shift(1)
+
 #Adding Btc as a feature
 
 Btc = yf.download("BTC-USD", period="730d", interval="1h")
@@ -225,12 +239,13 @@ Btc['hourly_return'] = ((Btc['Close']/Btc['Close'].shift(1))-1)
 X['btc_gap'] = X['hourly_return_t-1']-Btc['hourly_return'].shift(1) # ETH follows BTC with a lag
 #Btc['24h_average_return']= Btc['hourly_return'].rolling(24).mean()
 #X['24h_average_return'] = X['hourly_return_t-1'].rolling(24).mean()
-Btc['hourly_return'].shift(1).corr(X['hourly_return_t-1'])
+Btc['hourly_return'].shift(2).corr(X['hourly_return_t-1'])
 
 #droping columns not meant for ML
-X=X.drop(columns = ['ATR'])
+X=X.drop(columns = ['ATR', 'RSI'])
 X['target'] = X_prep['target']
 X['position'] = X_prep['stable_position'].astype(int)
+
 
 
 
@@ -332,7 +347,7 @@ all_predictions
 backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
 backtest_df['P_t'] = X_prep['P_t']
 
-backtest_df['stable_position']= create_stable_position(backtest_df)
+backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.06, sl=sl, horizon=horizon)
 
 
 #Adding return
@@ -351,3 +366,28 @@ print(backtest_df.tail(50))
 plt.plot(backtest_df['perfect_cum_return_w_fees'])
 plt.plot(backtest_df['perfect_cum_return'])
 plt.show()
+
+plot_importance(model)
+plt.show()
+
+#Predicting on newest unseen data
+
+predict_january = X_xg.loc['2026-01-26 20:00:00+00:00':].copy()
+probs_01 = model.predict_proba(predict_january)[:,1]
+pred_01 = (probs_01>0.6).astype(int)
+
+pd.DataFrame(pred_01).value_counts(normalize = True)
+
+
+y_pred01_series = pd.DataFrame(pd.Series(pred_01, index=predict_january.index)).rename(columns = {0: 'target'})
+y_pred01_series['hourly_return'] = X_prep['hourly_return']
+y_pred01_series['P_t'] = X_prep['P_t']
+print(y_pred01_series.head(100))
+
+y_pred01_series['stable_position']= create_stable_position(y_pred01_series, tp=0.04, sl=sl, horizon=24)
+y_pred01_series = cum_return(y_pred01_series)
+y_pred01_series['perfect_cum_return'][-1]
+
+plt.plot(y_pred01_series['P_t'])
+plt.show()
+
