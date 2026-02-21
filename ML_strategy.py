@@ -166,8 +166,8 @@ def cum_return_after_fees(df):
 
 X_prep = cum_return_after_fees(X_prep)
 
-#plt.plot(X_prep['perfect_cum_return_w_fees'])
-#plt.show()
+plt.plot(X_prep['perfect_cum_return_w_fees'])
+plt.show()
 
 maximal_theoretical_return = X_prep['perfect_cum_return_w_fees'][-1]
 print(maximal_theoretical_return)
@@ -262,7 +262,7 @@ X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_
 model_total = XGBClassifier(
     n_estimators=100,     # Dostatek pokusů na učení
     learning_rate=0.02,   # Pomalé a precizní učení
-    max_depth=4,          # Jednoduchá, robustní pravidla
+    max_depth=3,          # Jednoduchá, robustní pravidla
     subsample=0.7,        # Trénuj jen na části dat pro každý strom
     colsample_bytree=0.7,
     scale_pos_weight=2.96, # Náhodně vybírej indikátory
@@ -302,7 +302,7 @@ for train_end in range(train_size, len(X_xg) - test_size, step):
 
     spw = (y_train == 0).sum()/(y_train == 1).sum()
 
-    model = XGBClassifier(n_estimators = 100, max_depth = 4, scale_pos_weight = spw, eval_metric = "logloss" )
+    model = XGBClassifier(n_estimators = 100, max_depth = 3, scale_pos_weight = spw, eval_metric = "logloss", random_state = 42 )
     model.fit(X_train, y_train)
     models_list.append(model)
 
@@ -361,6 +361,7 @@ plt.title('Cumulative return before and after fees')
 plt.xlabel('Date')
 plt.ylabel('Cumulative return')
 plt.legend()
+plt.gcf().autofmt_xdate()
 #plt.savefig('cum_return.png', dpi = 300)
 plt.show()
 
@@ -393,5 +394,6 @@ plt.plot(y_pred01_series['perfect_cum_return_w_fees'], label = "Cumulative retur
 plt.plot(y_pred01_series['perfect_cum_return'], label = "Cumulative return before fees" )
 plt.plot((1+y_pred01_series['hourly_return']).cumprod(), label = "Market return")
 plt.title('Cumulative return - February 2026 fall')
+plt.gcf().autofmt_xdate()
 #plt.savefig('cum_return - 02.2026.png', dpi = 300)
 plt.show()
