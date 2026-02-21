@@ -18,7 +18,7 @@ The model is trained on an hourly dataset of the last 730 days and predicts whet
 
 ![Cumulative Returns](cum_return.png)
 
-* **Risk Mitigation:** TThe model’s value is most evident during market corrections, where it has proven to minize losses and stabilize return path when compared to the market return. This was achieved through:
+* **Risk Mitigation:** The model’s value is most evident during market corrections, where it has proven to minize losses and stabilize return path when compared to the market return. This was achieved through:
 
     1. **Probability Thresholding:** Only entries with a confidence score of **P > 0.60** were executed.
     2. **Stable Position Logic:** A custom function that prevents "churning" (over-trading) and enforces exit rules based on stop-loss and take-profit targets.

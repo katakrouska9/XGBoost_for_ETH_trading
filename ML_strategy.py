@@ -166,8 +166,8 @@ def cum_return_after_fees(df):
 
 X_prep = cum_return_after_fees(X_prep)
 
-plt.plot(X_prep['perfect_cum_return_w_fees'])
-plt.show()
+#plt.plot(X_prep['perfect_cum_return_w_fees'])
+#plt.show()
 
 maximal_theoretical_return = X_prep['perfect_cum_return_w_fees'][-1]
 print(maximal_theoretical_return)
@@ -374,7 +374,13 @@ plt.show()
 #                   TESTING ON NEWEST DATA - unseen
 ##############################################################
 
-predict_january = X_xg.loc['2026-01-26 20:00:00+00:00':].copy()
+#Defining the end of the training set
+last_tested = backtest_df.index[-1] + pd.Timedelta(hours=1)
+
+#Create a new df
+predict_january = X_xg.loc[last_tested:].copy()
+
+#Predict
 probs_01 = model.predict_proba(predict_january)[:,1]
 pred_01 = (probs_01>0.65).astype(int)
 probs_01.mean()
