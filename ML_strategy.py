@@ -281,7 +281,7 @@ y_pred_strict = (y_probs >= threshold).astype(int)
 print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_strict):.2f}")
 print(classification_report(y_xg_test, y_pred_strict))
 
-#### 2) Rolling train & test window #### 6 months training, 1 month test, then move by one month and repeat
+#### 2) Widening train window #### 6 months training, 1 month test, then move by one month and repeat
 
 train_start = 0
 train_size = 24*30*6
@@ -393,5 +393,5 @@ plt.plot(y_pred01_series['perfect_cum_return_w_fees'], label = "Cumulative retur
 plt.plot(y_pred01_series['perfect_cum_return'], label = "Cumulative return before fees" )
 plt.plot((1+y_pred01_series['hourly_return']).cumprod(), label = "Market return")
 plt.title('Cumulative return - February 2026 fall')
-plt.savefig('cum_return - 02.2026.png', dpi = 300)
+#plt.savefig('cum_return - 02.2026.png', dpi = 300)
 plt.show()
