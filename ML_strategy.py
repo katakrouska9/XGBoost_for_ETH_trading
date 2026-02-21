@@ -401,5 +401,6 @@ plt.plot(y_pred01_series['perfect_cum_return'], label = "Cumulative return befor
 plt.plot((1+y_pred01_series['hourly_return']).cumprod(), label = "Market return")
 plt.title('Cumulative return - February 2026 fall')
 plt.gcf().autofmt_xdate()
+plt.legend()
 #plt.savefig('cum_return - 02.2026.png', dpi = 300)
 plt.show()
