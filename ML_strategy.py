@@ -255,11 +255,11 @@ X_crop = X_crop.iloc[:-48]
 ##############################################################
 
 y_xg = X_crop['target']
-X_xg = X_crop.drop(columns = ['position', 'target'])
+X_xg = X_crop.drop(columns = ['position', 'target', "btc_gap"])
 
 
 ###### 1) One test & train window ####
-X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.5, shuffle= False)
+X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
 
 model_total = XGBClassifier(
     n_estimators=200,     # Dostatek pokusů na učení
@@ -267,7 +267,7 @@ model_total = XGBClassifier(
     max_depth=3,          # Jednoduchá, robustní pravidla
     subsample=0.7,        # Trénuj jen na části dat pro každý strom
     colsample_bytree=0.7,
-    reg_alpha=0.2,
+    reg_alpha=0.1,
     scale_pos_weight=2.96, # Náhodně vybírej indikátory
     random_state=42
 )
@@ -284,7 +284,56 @@ print(classification_report(y_xg_train, y_pred_train))
 
 all_predictions = pd.Series(y_pred_proba, index=X_xg_test.index)
 
+model_total.score(X_xg, y_xg)
 
+
+
+#                   BACKTEST
+##############################################################
+
+#Creating position -- ONLY IF NOT PREDICTING POSITION ALREADY
+backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
+backtest_df['P_t'] = X_prep['P_t']
+
+backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.04, sl=sl, horizon=horizon)
+
+
+#Adding return
+#backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'stable_position'})
+backtest_df['hourly_return']= X_prep['hourly_return'] #merged based on index
+
+
+# Cum return before fees
+backtest_df = cum_return(backtest_df)
+
+backtest_df = cum_return_after_fees(backtest_df)
+print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
+print(backtest_df.tail(50))
+
+### random
+backtest_df['cum_return_market']= (1+backtest_df['hourly_return']).cumprod()
+
+plt.plot(backtest_df['perfect_cum_return_w_fees'], label = 'Cumulative return after fees')
+plt.plot(backtest_df['perfect_cum_return'], label = 'Cumulative return before fees')
+plt.plot(backtest_df['cum_return_market'], label = 'Market return (no fees)')
+plt.axhline(y=1, color='black', linestyle='--', linewidth=1.5)
+plt.title('Cumulative return before and after fees')
+plt.xlabel('Date')
+plt.ylabel('Cumulative return')
+plt.legend()
+plt.gcf().autofmt_xdate()
+#plt.savefig('cum_return.png', dpi = 300)
+plt.show()
+
+plot_importance(model_total)
+plt.title('Feature importance')
+#plt.savefig('feature_importance.png', dpi = 300)
+plt.show()
+
+
+
+
+##### NOT USED ####
 #### 2) Widening train window #### 6 months training, 1 month test, then move by one month and repeat
 
 train_start = 0
@@ -335,54 +384,6 @@ results_call['f1_score'].mean()
 
 all_predictions = pd.concat(y_pred_rolling)
 all_predictions
-
-## Model quality
-
-model.score(X_xg, y_xg)
-
-
-
-#                   BACKTEST
-##############################################################
-
-#Creating position -- ONLY IF NOT PREDICTING POSITION ALREADY
-backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
-backtest_df['P_t'] = X_prep['P_t']
-
-backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.04, sl=sl, horizon=horizon)
-
-
-#Adding return
-#backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'stable_position'})
-backtest_df['hourly_return']= X_prep['hourly_return'] #merged based on index
-
-
-# Cum return before fees
-backtest_df = cum_return(backtest_df)
-
-backtest_df = cum_return_after_fees(backtest_df)
-print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
-print(backtest_df.tail(50))
-
-### random
-backtest_df['cum_return_market']= (1+backtest_df['hourly_return']).cumprod()
-
-plt.plot(backtest_df['perfect_cum_return_w_fees'], label = 'Cumulative return after fees')
-plt.plot(backtest_df['perfect_cum_return'], label = 'Cumulative return before fees')
-plt.plot(backtest_df['cum_return_market'], label = 'Market return (no fees)')
-plt.axhline(y=1, color='black', linestyle='--', linewidth=1.5)
-plt.title('Cumulative return before and after fees')
-plt.xlabel('Date')
-plt.ylabel('Cumulative return')
-plt.legend()
-plt.gcf().autofmt_xdate()
-#plt.savefig('cum_return.png', dpi = 300)
-plt.show()
-
-plot_importance(model_total)
-plt.title('Feature importance')
-#plt.savefig('feature_importance.png', dpi = 300)
-plt.show()
 
 
 #                   TESTING ON NEWEST DATA - unseen
