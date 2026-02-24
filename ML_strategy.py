@@ -6,6 +6,7 @@ import yfinance as yf
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from xgboost import plot_importance
+from sklearn.model_selection import cross_val_score
 
 
 
@@ -178,6 +179,7 @@ print(maximal_theoretical_return)
 
 #SMAs = moving averages
 X = pd.DataFrame(X_prep['hourly_return'].shift(1)).rename(columns = {'hourly_return': "hourly_return_t-1"})
+X['hourly_return_t-1'] = np.log(X['hourly_return_t-1']+1)
 X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
 X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
 X_prep['SMA50_t-1']= X_prep['P_t-1'].rolling(50).mean()
@@ -211,7 +213,7 @@ X['weekday'] = X.index.dayofweek
 
 # Cumulative return - last 12 hours
 
-X['cum_return_12h'] = (X_prep['P_t-1']/X_prep['P_t-1'].shift(12))-1
+X['cum_return_12h'] = np.log(X_prep['P_t-1']/X_prep['P_t-1'].shift(12))
 
 #RSI (Relative Strength Index)
 
@@ -257,29 +259,31 @@ X_xg = X_crop.drop(columns = ['position', 'target'])
 
 
 ###### 1) One test & train window ####
-X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
+X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.5, shuffle= False)
 
 model_total = XGBClassifier(
-    n_estimators=100,     # Dostatek pokusů na učení
-    learning_rate=0.02,   # Pomalé a precizní učení
+    n_estimators=200,     # Dostatek pokusů na učení
+    learning_rate=0.03,   # Pomalé a precizní učení
     max_depth=3,          # Jednoduchá, robustní pravidla
     subsample=0.7,        # Trénuj jen na části dat pro každý strom
     colsample_bytree=0.7,
+    reg_alpha=0.2,
     scale_pos_weight=2.96, # Náhodně vybírej indikátory
     random_state=42
 )
 model_total.fit(X_xg_train,y_xg_train)
-y_pred = model_total.predict(X_xg_test)
-print(f"Accuracy: {accuracy_score(y_xg_test, y_pred):.2f}")
-print(classification_report(y_xg_test, y_pred))
+y_pred = model_total.predict_proba(X_xg_test)[:,1]
+y_pred_proba = (y_pred >= 0.50).astype(int)
+print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_proba):.2f}")
+print(classification_report(y_xg_test, y_pred_proba))
 
-# Stricter buying threshold
-y_probs = model_total.predict_proba(X_xg_test)[:, 1]
-threshold = 0.60
-y_pred_strict = (y_probs >= threshold).astype(int)
+#Model fit assessment
+train_proba = model_total.predict_proba(X_xg_train)[:,1]
+y_pred_train = (train_proba >= 0.50).astype(int)
+print(classification_report(y_xg_train, y_pred_train))
 
-print(f"Accuracy: {accuracy_score(y_xg_test, y_pred_strict):.2f}")
-print(classification_report(y_xg_test, y_pred_strict))
+all_predictions = pd.Series(y_pred_proba, index=X_xg_test.index)
+
 
 #### 2) Widening train window #### 6 months training, 1 month test, then move by one month and repeat
 
@@ -294,7 +298,6 @@ models_list = []
 
 for train_end in range(train_size, len(X_xg) - test_size, step):
 
-    
     test_end = train_end + test_size
 
     X_train, X_test = X_xg.iloc[0:train_end], X_xg.iloc[train_end:test_end]
@@ -302,9 +305,9 @@ for train_end in range(train_size, len(X_xg) - test_size, step):
 
     spw = (y_train == 0).sum()/(y_train == 1).sum()
 
-    model = XGBClassifier(n_estimators = 100, max_depth = 3, scale_pos_weight = spw, eval_metric = "logloss", random_state = 42 )
+    model = model_total
     model.fit(X_train, y_train)
-    models_list.append(model)
+    
 
     probs = model.predict_proba(X_test)[:,1]
     y_pred = (probs > 0.60).astype(int)
@@ -317,16 +320,27 @@ for train_end in range(train_size, len(X_xg) - test_size, step):
     n_trades = y_pred.sum().item()
 
     results.append({'start_date': X_test.index[0], 'end_date': X_test.index[-1],'precision_1': prec1, 'recall_1': rec1, 'f1_score': f1_score, 'n_trades': n_trades})
-        
+
     y_pred_rolling.append(y_pred_series)
-    
+
+train_proba = model.predict_proba(X_train)[:,1]
+y_pred_train = (train_proba > 0.60).astype(int)
+report_train = classification_report(y_train, y_pred_train, output_dict= True, zero_division= 0)
+f1_score_train = report_train['1']['f1-score']
+
 results_call = pd.DataFrame(results)
 print(results_call)
 results_call['precision_1'].mean()
-results_call['recall_1'].mean()
+results_call['f1_score'].mean()
 
 all_predictions = pd.concat(y_pred_rolling)
 all_predictions
+
+## Model quality
+
+model.score(X_xg, y_xg)
+
+
 
 #                   BACKTEST
 ##############################################################
@@ -335,7 +349,7 @@ all_predictions
 backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
 backtest_df['P_t'] = X_prep['P_t']
 
-backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.06, sl=sl, horizon=horizon)
+backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.04, sl=sl, horizon=horizon)
 
 
 #Adding return
@@ -365,7 +379,7 @@ plt.gcf().autofmt_xdate()
 #plt.savefig('cum_return.png', dpi = 300)
 plt.show()
 
-plot_importance(model)
+plot_importance(model_total)
 plt.title('Feature importance')
 #plt.savefig('feature_importance.png', dpi = 300)
 plt.show()
