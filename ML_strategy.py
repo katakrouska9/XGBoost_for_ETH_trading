@@ -284,6 +284,7 @@ y_pred_train = (train_proba >= 0.50).astype(int)
 print(classification_report(y_xg_train, y_pred_train))
 
 all_predictions = pd.Series(y_pred_proba, index=X_xg_test.index)
+train_predictions = pd.Series(y_pred_train, index = X_xg_train.index)
 
 model_total.score(X_xg, y_xg)
 
@@ -293,22 +294,20 @@ model_total.score(X_xg, y_xg)
 ##############################################################
 
 #Creating position 
+
 backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
 backtest_df['P_t'] = X_prep['P_t']
 
 backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.04, sl=sl, horizon=horizon)
 
-
 #Adding return
 backtest_df['hourly_return']= X_prep['hourly_return'] #merged based on index
-
 
 # Cum return before fees
 backtest_df = cum_return(backtest_df)
 
 backtest_df = cum_return_after_fees(backtest_df)
 print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
-print(backtest_df.tail(100))
 
 ### random
 backtest_df['cum_return_market']= (1+backtest_df['hourly_return']).cumprod()
@@ -317,7 +316,7 @@ plt.plot(backtest_df['perfect_cum_return_w_fees'], label = 'Cumulative return af
 plt.plot(backtest_df['perfect_cum_return'], label = 'Cumulative return before fees')
 plt.plot(backtest_df['cum_return_market'], label = 'Market return (no fees)')
 plt.axhline(y=1, color='black', linestyle='--', linewidth=1.5)
-plt.title('Cumulative return before and after fees')
+plt.title('Cumulative return before and after fees - test set')
 plt.xlabel('Date')
 plt.ylabel('Cumulative return')
 plt.legend()
