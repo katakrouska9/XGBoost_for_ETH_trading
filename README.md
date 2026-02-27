@@ -1,6 +1,6 @@
-# Ethereum Algorithmic Trading: XGBoost Strategy with Transaction Costs
+# ETH Algorithmic Trading: XGBoost Strategy with Transaction Costs
 
-This project implements a short-term prediction model for Ethereum (ETH-USD) using the **XGBoost** classification algorithm. The main goal was to build a robust trading algorithm capable of performing in real market conditions, accounting for transaction fees, slippage, and regime changes.
+This project implements a short-term prediction model for Ether (ETH-USD) using the **XGBoost** classification algorithm. The main goal was to build a robust trading algorithm capable of performing in real market conditions, accounting for transaction fees, slippage, and regime changes.
 
 ## Target & strategy definition
 
