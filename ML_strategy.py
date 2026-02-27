@@ -15,7 +15,7 @@ from sklearn.model_selection import cross_val_score
 
 # Download price
 
-pd.reset_option("display.max.rows", None)
+pd.set_option("display.max.columns", None)
 
 data = yf.download("ETH-USD", period="730d", interval="1h")
 data.columns = data.columns.get_level_values(0)
@@ -179,7 +179,7 @@ print(maximal_theoretical_return)
 
 #SMAs = moving averages
 X = pd.DataFrame(X_prep['hourly_return'].shift(1)).rename(columns = {'hourly_return': "hourly_return_t-1"})
-X['hourly_return_t-1'] = np.log(X['hourly_return_t-1']+1)
+X['hourly_return_t-1'] = np.log(X['hourly_return_t-1']+1) #Translating to log returns, which are best to satisfy stationarity requirements, indirectly boosting performance of tree-based models
 X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
 X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
 X_prep['SMA50_t-1']= X_prep['P_t-1'].rolling(50).mean()
@@ -237,7 +237,7 @@ Btc.head()
 Btc.isna().sum()
 Btc.describe()
 
-Btc['hourly_return'] = ((Btc['Close']/Btc['Close'].shift(1))-1)
+Btc['hourly_return'] = np.log(Btc['Close']/Btc['Close'].shift(1))
 X['btc_gap'] = X['hourly_return_t-1']-(Btc['hourly_return'].shift(1)) # Difference between ETH and BTC return
 
 
@@ -254,21 +254,22 @@ X_crop = X_crop.iloc[:-48]
 #                   XGBOOST ALGORITHM TRAINING
 ##############################################################
 
+
 y_xg = X_crop['target']
-X_xg = X_crop.drop(columns = ['position', 'target', "btc_gap"])
+X_xg = X_crop.drop(columns = ['position', 'target', 'btc_gap'])
 
 
 ###### 1) One test & train window ####
 X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
 
 model_total = XGBClassifier(
-    n_estimators=200,     # Dostatek pokusů na učení
-    learning_rate=0.03,   # Pomalé a precizní učení
-    max_depth=3,          # Jednoduchá, robustní pravidla
-    subsample=0.7,        # Trénuj jen na části dat pro každý strom
+    n_estimators=200,     
+    learning_rate=0.03,   
+    max_depth=3,          
+    subsample=0.7,        
     colsample_bytree=0.7,
     reg_alpha=0.1,
-    scale_pos_weight=2.96, # Náhodně vybírej indikátory
+    scale_pos_weight=2.96, 
     random_state=42
 )
 model_total.fit(X_xg_train,y_xg_train)
@@ -291,7 +292,7 @@ model_total.score(X_xg, y_xg)
 #                   BACKTEST
 ##############################################################
 
-#Creating position -- ONLY IF NOT PREDICTING POSITION ALREADY
+#Creating position 
 backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'target'})
 backtest_df['P_t'] = X_prep['P_t']
 
@@ -299,7 +300,6 @@ backtest_df['stable_position']= create_stable_position(backtest_df, tp=0.04, sl=
 
 
 #Adding return
-#backtest_df = (pd.DataFrame(all_predictions.copy())).rename(columns = {0: 'stable_position'})
 backtest_df['hourly_return']= X_prep['hourly_return'] #merged based on index
 
 
@@ -308,7 +308,7 @@ backtest_df = cum_return(backtest_df)
 
 backtest_df = cum_return_after_fees(backtest_df)
 print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
-print(backtest_df.tail(50))
+print(backtest_df.tail(100))
 
 ### random
 backtest_df['cum_return_market']= (1+backtest_df['hourly_return']).cumprod()
@@ -330,11 +330,12 @@ plt.title('Feature importance')
 #plt.savefig('feature_importance.png', dpi = 300)
 plt.show()
 
+## OTHER ALGORITHM SETTINGS
 
+## XGBoost on widening training window with 1 month test
 
-
-##### NOT USED ####
-#### 2) Widening train window #### 6 months training, 1 month test, then move by one month and repeat
+### Test on widening window was found less suitable for this application since first test samples are trained of very few data. 
+### As a result, the test period starts with weak performance which leads to bad start for cumulative returns, affecting the whole period. 
 
 train_start = 0
 train_size = 24*30*6
@@ -359,7 +360,7 @@ for train_end in range(train_size, len(X_xg) - test_size, step):
     
 
     probs = model.predict_proba(X_test)[:,1]
-    y_pred = (probs > 0.60).astype(int)
+    y_pred = (probs > 0.50).astype(int)
     y_pred_series = pd.Series(y_pred, index=X_test.index)
 
     report = classification_report(y_test, y_pred, output_dict= True, zero_division= 0)
@@ -372,50 +373,8 @@ for train_end in range(train_size, len(X_xg) - test_size, step):
 
     y_pred_rolling.append(y_pred_series)
 
-train_proba = model.predict_proba(X_train)[:,1]
-y_pred_train = (train_proba > 0.60).astype(int)
-report_train = classification_report(y_train, y_pred_train, output_dict= True, zero_division= 0)
-f1_score_train = report_train['1']['f1-score']
-
 results_call = pd.DataFrame(results)
-print(results_call)
 results_call['precision_1'].mean()
 results_call['f1_score'].mean()
 
-all_predictions = pd.concat(y_pred_rolling)
-all_predictions
 
-
-#                   TESTING ON NEWEST DATA - unseen
-##############################################################
-
-#Defining the end of the training set
-last_tested = backtest_df.index[-1] + pd.Timedelta(hours=1)
-
-#Create a new df
-predict_january = X_xg.loc[last_tested:].copy()
-
-#Predict
-probs_01 = model.predict_proba(predict_january)[:,1]
-pred_01 = (probs_01>0.65).astype(int)
-probs_01.mean()
-pd.DataFrame(pred_01).value_counts(normalize = True)
-
-#Calculation of cumulative return
-y_pred01_series = pd.DataFrame(pd.Series(pred_01, index=predict_january.index)).rename(columns = {0: 'target'})
-y_pred01_series['hourly_return'] = X_prep['hourly_return']
-y_pred01_series['P_t'] = X_prep['P_t']
-
-y_pred01_series['stable_position']= create_stable_position(y_pred01_series, tp=0.04, sl=sl, horizon=24)
-y_pred01_series = cum_return(y_pred01_series)
-y_pred01_series = cum_return_after_fees(y_pred01_series)
-print(y_pred01_series['perfect_cum_return'][-1], y_pred01_series['perfect_cum_return_w_fees'][-1])
-
-plt.plot(y_pred01_series['perfect_cum_return_w_fees'], label = "Cumulative return after fees" )
-plt.plot(y_pred01_series['perfect_cum_return'], label = "Cumulative return before fees" )
-plt.plot((1+y_pred01_series['hourly_return']).cumprod(), label = "Market return")
-plt.title('Cumulative return - February 2026 fall')
-plt.gcf().autofmt_xdate()
-plt.legend()
-#plt.savefig('cum_return - 02.2026.png', dpi = 300)
-plt.show()
