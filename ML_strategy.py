@@ -177,9 +177,10 @@ print(maximal_theoretical_return)
 #                   FEATURE ENGINEERING - creating X 
 ##############################################################
 
-#SMAs = moving averages
 X = pd.DataFrame(X_prep['hourly_return'].shift(1)).rename(columns = {'hourly_return': "hourly_return_t-1"})
 X['hourly_return_t-1'] = np.log(X['hourly_return_t-1']+1) #Translating to log returns, which are best to satisfy stationarity requirements, indirectly boosting performance of tree-based models
+
+#SMAs = moving averages
 X_prep['SMA20_t-1'] = X_prep['P_t-1'].rolling(20).mean()
 X['Distance to SMA20'] = (X_prep['P_t-1']/X_prep['SMA20_t-1'])-1
 X_prep['SMA50_t-1']= X_prep['P_t-1'].rolling(50).mean()
@@ -228,7 +229,7 @@ def calculate_rsi(series, period=14):
 X['RSI'] = calculate_rsi(X_prep['P_t'], 14)
 X['RSI_t-1'] = X['RSI'].shift(1)
 
-#BTC
+#BTC returns
 
 Btc = yf.download("BTC-USD", period="730d", interval="1h")
 Btc.columns = data.columns.get_level_values(0)
@@ -258,8 +259,6 @@ X_crop = X_crop.iloc[:-48]
 y_xg = X_crop['target']
 X_xg = X_crop.drop(columns = ['position', 'target', 'btc_gap'])
 
-
-###### 1) One test & train window ####
 X_xg_train, X_xg_test, y_xg_train, y_xg_test = train_test_split(X_xg,y_xg, test_size=0.3, shuffle= False)
 
 model_total = XGBClassifier(
@@ -309,7 +308,7 @@ backtest_df = cum_return(backtest_df)
 backtest_df = cum_return_after_fees(backtest_df)
 print(backtest_df['perfect_cum_return'][-1],backtest_df['perfect_cum_return_w_fees'][-1])
 
-### random
+#Market return
 backtest_df['cum_return_market']= (1+backtest_df['hourly_return']).cumprod()
 
 plt.plot(backtest_df['perfect_cum_return_w_fees'], label = 'Cumulative return after fees')
